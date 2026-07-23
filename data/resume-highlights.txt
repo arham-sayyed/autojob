@@ -1,0 +1,10 @@
+Replace this with 3-5 short lines summarizing your background — this plain
+text is fed to Groq to personalize outreach emails (drop your actual PDF
+resume at RESUME_PATH separately; this file is not parsed from it since no
+PDF-parsing library is in the stack).
+
+Example:
+Software engineer with hands-on experience building full-stack web
+applications using Node.js, TypeScript, and React. Comfortable working
+across the stack from REST APIs to responsive frontends. Looking for
+backend/full-stack roles at small, fast-moving teams.

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+logs/
+data/companies.xlsx
+data/backups/
+.wwebjs_auth/
+.wwebjs_cache/
