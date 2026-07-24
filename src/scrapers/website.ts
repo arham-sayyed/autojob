@@ -8,17 +8,24 @@ export interface ScrapedPage {
   html: string;
 }
 
-const PATHS_TO_TRY = [
-  "/",
-  "/about",
-  "/contact",
-  "/careers",
-  "/jobs",
-  "/team",
-  "/join-us",
-  "/work-with-us",
+// Matched against a link's path *and* its visible anchor text — sites phrase
+// these very differently ("Get in touch" -> /contact, "Meet the team" -> /about-us).
+const LINK_KEYWORD_PATTERNS: RegExp[] = [
+  /\babout(?:[-\s]?us)?\b/i,
+  /\bcontact(?:[-\s]?us)?\b/i,
+  /\bcareers?\b/i,
+  /\bjobs?\b/i,
+  /\bteam\b/i,
+  /\bjoin[-\s]?us\b/i,
+  /\bjoin[-\s]?our[-\s]?team\b/i,
+  /\bwork[-\s]?with[-\s]?us\b/i,
+  /\bwe'?re[-\s]?hiring\b/i,
+  /\bhiring\b/i,
+  /\bopen[-\s]?positions?\b/i,
+  /\bvacanc(?:y|ies)\b/i,
 ];
 
+const MAX_MATCHED_LINKS = 8;
 const TIMEOUT_MS = 8000;
 const MAX_ATTEMPTS = 4; // 1 initial attempt + 3 retries
 const USER_AGENT = "Mozilla/5.0 (compatible; JobOutreachBot/1.0; +personal-job-search-tool)";
@@ -165,20 +172,61 @@ export async function fetchSinglePage(url: string): Promise<string | null> {
 }
 
 /**
- * Crawls a company's common informational pages (home, about, contact,
- * careers, ...), skipping 404s and logging failures separately from
- * successes. Falls back to a headless Puppeteer render for pages that look
- * client-rendered (near-empty static HTML with external scripts).
+ * Scans the homepage's own links (href *and* anchor text) for ones that
+ * look like about/contact/careers/team pages, rather than guessing fixed
+ * paths that usually don't exist. Stays on the same origin — external ATS
+ * links are handled separately by extractors/careers.ts + fetchSinglePage.
+ */
+function findMatchingLinks(html: string, baseUrl: string): string[] {
+  const $ = cheerio.load(html);
+  const origin = new URL(baseUrl).origin;
+  const matched = new Set<string>();
+
+  $("a[href]").each((_, el) => {
+    if (matched.size >= MAX_MATCHED_LINKS) return;
+
+    const href = $(el).attr("href") ?? "";
+    if (!href || href.startsWith("#") || /^(mailto|tel|javascript):/i.test(href)) return;
+
+    let resolved: URL;
+    try {
+      resolved = new URL(href, baseUrl);
+    } catch {
+      return;
+    }
+    if (resolved.origin !== origin) return;
+
+    resolved.hash = "";
+    const text = $(el).text().trim();
+    const haystack = `${resolved.pathname} ${text}`;
+    const isMatch = LINK_KEYWORD_PATTERNS.some((pattern) => pattern.test(haystack));
+    if (isMatch) {
+      matched.add(resolved.toString());
+    }
+  });
+
+  return [...matched];
+}
+
+/**
+ * Fetches the homepage, then follows only the links on it that actually
+ * look like about/contact/careers/team pages (via findMatchingLinks) —
+ * instead of blindly guessing a fixed list of paths that usually 404.
+ * Skips failures quickly and logs them separately from successes. Falls
+ * back to a headless Puppeteer render for pages that look client-rendered.
  */
 export async function crawlWebsite(baseUrl: string): Promise<ScrapedPage[]> {
   const origin = normalizeBaseUrl(baseUrl);
-  const results: ScrapedPage[] = [];
+  const homeUrl = new URL("/", origin).toString();
 
-  for (const relativePath of PATHS_TO_TRY) {
-    const url = new URL(relativePath, origin).toString();
+  const homeHtml = await crawlLimiter.run(() => fetchPageWithFallback(homeUrl));
+  if (!homeHtml) return [];
 
+  const results: ScrapedPage[] = [{ url: homeUrl, html: homeHtml }];
+
+  const links = findMatchingLinks(homeHtml, homeUrl);
+  for (const url of links) {
     const html = await crawlLimiter.run(() => fetchPageWithFallback(url));
-
     if (html) {
       results.push({ url, html });
     }
