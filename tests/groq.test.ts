@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scoreFit } from "../src/ai/groq";
+import { scoreFit, parseSubjectBody } from "../src/ai/groq";
 
 describe("ai/groq scoreFit (rules-based, deterministic)", () => {
   it("scores 0 for a non-hiring, non-matching company", () => {
@@ -47,5 +47,41 @@ describe("ai/groq scoreFit (rules-based, deterministic)", () => {
     });
     // hiring(25) + remote(20) + stack(2*10=20) + junior(15)
     expect(score).toBe(80);
+  });
+});
+
+describe("ai/groq parseSubjectBody", () => {
+  it("parses a well-formed response", () => {
+    const raw = "Subject: Interested in joining Acme\n\nHi there,\n\nI'd love to join.\n\nBest,";
+    expect(parseSubjectBody(raw, "fallback")).toEqual({
+      subject: "Interested in joining Acme",
+      body: "Hi there,\n\nI'd love to join.\n\nBest,",
+    });
+  });
+
+  it("tolerates a preamble before the Subject: line", () => {
+    // Regression: the old ^-anchored regex failed on any preamble, dumping
+    // the whole raw response (Subject: line included) into the body.
+    const raw = "Here's the email:\n\nSubject: Interested in joining Acme\n\nHi there,\n\nBest,";
+    expect(parseSubjectBody(raw, "fallback")).toEqual({
+      subject: "Interested in joining Acme",
+      body: "Hi there,\n\nBest,",
+    });
+  });
+
+  it("strips a markdown code fence wrapping the response", () => {
+    const raw = "```\nSubject: Interested in joining Acme\n\nHi there,\n\nBest,\n```";
+    expect(parseSubjectBody(raw, "fallback")).toEqual({
+      subject: "Interested in joining Acme",
+      body: "Hi there,\n\nBest,",
+    });
+  });
+
+  it("falls back to the given subject when no Subject: line is present at all", () => {
+    const raw = "Hi there, I'd love to join your team.\n\nBest,";
+    expect(parseSubjectBody(raw, "fallback subject")).toEqual({
+      subject: "fallback subject",
+      body: raw,
+    });
   });
 });

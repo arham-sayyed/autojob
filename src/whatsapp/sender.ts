@@ -18,6 +18,10 @@ export interface WhatsAppOutcome {
   // should be retried on a later run rather than permanently marked.
   status: WhatsAppStatus | null;
   error?: string;
+  // true only when the *whole batch* should stop (daily cap reached).
+  // A per-row transient error (network blip, etc.) sets `error` without
+  // this, so callers skip just that row and continue with the rest.
+  stopBatch?: boolean;
 }
 
 const DEFAULT_COUNT_DIR = path.resolve(__dirname, "..", "..", "logs");
@@ -131,7 +135,7 @@ export function createWhatsAppSender(options?: WhatsAppSenderOptions): WhatsAppS
       if (hasReachedDailyCap()) {
         const error = `daily WhatsApp cap (${config.dailyWhatsappCap}) reached`;
         logger.warn(`[whatsapp] ${error} — leaving remaining rows for the next run`);
-        return { status: null, error };
+        return { status: null, error, stopBatch: true };
       }
 
       try {
@@ -171,9 +175,16 @@ export function createWhatsAppSender(options?: WhatsAppSenderOptions): WhatsAppS
   }
 
   async function destroy(): Promise<void> {
-    if (clientPromise) {
+    if (!clientPromise) return;
+    // clientPromise may be a *rejected* promise (e.g. QR auth failed) —
+    // awaiting it re-throws, which would otherwise turn an already-completed
+    // run into a fatal-looking exit at the very last step.
+    try {
       const client = await clientPromise;
       await client.destroy();
+    } catch (err) {
+      logger.warn(`[whatsapp] client cleanup skipped: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
       clientPromise = null;
     }
   }

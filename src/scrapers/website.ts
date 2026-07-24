@@ -26,6 +26,27 @@ const LINK_KEYWORD_PATTERNS: RegExp[] = [
 ];
 
 const MAX_MATCHED_LINKS = 8;
+
+// A link whose *entire* last path segment is one of these is almost
+// certainly the real page; anything else matching LINK_KEYWORD_PATTERNS
+// (e.g. a blog post slug containing "team" or "jobs") is a weaker signal.
+const EXACT_SEGMENT_MATCHES = new Set([
+  "about",
+  "about-us",
+  "aboutus",
+  "contact",
+  "contact-us",
+  "contactus",
+  "careers",
+  "career",
+  "jobs",
+  "team",
+  "our-team",
+  "meet-the-team",
+  "join-us",
+  "work-with-us",
+]);
+
 const TIMEOUT_MS = 8000;
 const MAX_ATTEMPTS = 4; // 1 initial attempt + 3 retries
 const USER_AGENT = "Mozilla/5.0 (compatible; JobOutreachBot/1.0; +personal-job-search-tool)";
@@ -176,15 +197,19 @@ export async function fetchSinglePage(url: string): Promise<string | null> {
  * look like about/contact/careers/team pages, rather than guessing fixed
  * paths that usually don't exist. Stays on the same origin — external ATS
  * links are handled separately by extractors/careers.ts + fetchSinglePage.
+ *
+ * Scores every match and takes the best MAX_MATCHED_LINKS rather than
+ * whichever appear first in DOM order: a "Latest from our blog" section
+ * earlier on the page can easily contain more than 8 posts whose slugs
+ * incidentally match (e.g. "5 jobs of the future"), which would otherwise
+ * exhaust the link budget before the real footer nav is even reached.
  */
-function findMatchingLinks(html: string, baseUrl: string): string[] {
+export function findMatchingLinks(html: string, baseUrl: string): string[] {
   const $ = cheerio.load(html);
   const origin = new URL(baseUrl).origin;
-  const matched = new Set<string>();
+  const candidates = new Map<string, number>(); // url -> score
 
   $("a[href]").each((_, el) => {
-    if (matched.size >= MAX_MATCHED_LINKS) return;
-
     const href = $(el).attr("href") ?? "";
     if (!href || href.startsWith("#") || /^(mailto|tel|javascript):/i.test(href)) return;
 
@@ -195,17 +220,27 @@ function findMatchingLinks(html: string, baseUrl: string): string[] {
       return;
     }
     if (resolved.origin !== origin) return;
-
     resolved.hash = "";
+
     const text = $(el).text().trim();
     const haystack = `${resolved.pathname} ${text}`;
     const isMatch = LINK_KEYWORD_PATTERNS.some((pattern) => pattern.test(haystack));
-    if (isMatch) {
-      matched.add(resolved.toString());
+    if (!isMatch) return;
+
+    const lastSegment = resolved.pathname.replace(/\/+$/, "").split("/").pop()?.toLowerCase() ?? "";
+    const score = EXACT_SEGMENT_MATCHES.has(lastSegment) ? 2 : 1;
+
+    const key = resolved.toString();
+    const existing = candidates.get(key);
+    if (existing === undefined || score > existing) {
+      candidates.set(key, score);
     }
   });
 
-  return [...matched];
+  return [...candidates.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, MAX_MATCHED_LINKS)
+    .map(([url]) => url);
 }
 
 /**

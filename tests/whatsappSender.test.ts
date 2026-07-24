@@ -3,10 +3,11 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const { getNumberIdMock, sendMessageMock, destroyMock } = vi.hoisted(() => ({
+const { getNumberIdMock, sendMessageMock, destroyMock, authState } = vi.hoisted(() => ({
   getNumberIdMock: vi.fn(),
   sendMessageMock: vi.fn(),
   destroyMock: vi.fn(),
+  authState: { shouldFail: false },
 }));
 
 vi.mock("whatsapp-web.js", () => {
@@ -17,7 +18,13 @@ vi.mock("whatsapp-web.js", () => {
       return this;
     }
     async initialize() {
-      setTimeout(() => this.handlers["ready"]?.forEach((cb) => cb()), 0);
+      setTimeout(() => {
+        if (authState.shouldFail) {
+          this.handlers["auth_failure"]?.forEach((cb) => cb("bad QR session"));
+        } else {
+          this.handlers["ready"]?.forEach((cb) => cb());
+        }
+      }, 0);
     }
     getNumberId = getNumberIdMock;
     sendMessage = sendMessageMock;
@@ -42,6 +49,7 @@ describe("whatsapp/sender", () => {
     getNumberIdMock.mockReset();
     sendMessageMock.mockReset().mockResolvedValue({});
     destroyMock.mockReset();
+    authState.shouldFail = false;
   });
 
   afterEach(() => {
@@ -80,7 +88,7 @@ describe("whatsapp/sender", () => {
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
-  it("enforces the daily cap without touching the client once reached", async () => {
+  it("enforces the daily cap without touching the client once reached, and flags stopBatch", async () => {
     fs.mkdirSync(tmpDir, { recursive: true });
     const today = new Date().toISOString().slice(0, 10);
     fs.writeFileSync(path.join(tmpDir, `whatsapp-count-${today}.json`), JSON.stringify({ count: 25 }));
@@ -91,6 +99,34 @@ describe("whatsapp/sender", () => {
     const outcome = await sender.sendToRow({ phoneMobile: "9876543210", phoneLandline: "" }, "hi");
     expect(outcome.status).toBeNull();
     expect(outcome.error).toMatch(/daily whatsapp cap/i);
+    expect(outcome.stopBatch).toBe(true);
     expect(getNumberIdMock).not.toHaveBeenCalled();
+  });
+
+  it("does not set stopBatch on a per-row transient error, so callers can skip and continue", async () => {
+    // Regression: cap-reached and a one-off transient error used to be
+    // indistinguishable to the caller (both were {status: null, error}),
+    // so a single flaky lookup would abort the entire remaining batch.
+    getNumberIdMock.mockRejectedValueOnce(new Error("network blip"));
+    const sender = createWhatsAppSender({ countDir: tmpDir, minDelayMs: 0, maxDelayMs: 0 });
+    const outcome = await sender.sendToRow({ phoneMobile: "9876543210", phoneLandline: "" }, "hi");
+    expect(outcome.status).toBeNull();
+    expect(outcome.error).toMatch(/network blip/);
+    expect(outcome.stopBatch).toBeUndefined();
+  });
+
+  it("destroy() does not throw when the client never finished authenticating", async () => {
+    // Regression: destroy() awaited a possibly-rejected clientPromise with
+    // no try/catch, turning cleanup after a failed QR auth into an uncaught
+    // throw at the very end of an otherwise-successful run.
+    authState.shouldFail = true;
+    const sender = createWhatsAppSender({ countDir: tmpDir, minDelayMs: 0, maxDelayMs: 0 });
+
+    const outcome = await sender.sendToRow({ phoneMobile: "9876543210", phoneLandline: "" }, "hi");
+    expect(outcome.status).toBeNull();
+    expect(outcome.error).toMatch(/authentication failed/i);
+
+    await expect(sender.destroy()).resolves.toBeUndefined();
+    expect(destroyMock).not.toHaveBeenCalled(); // client object never resolved, nothing to destroy()
   });
 });

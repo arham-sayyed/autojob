@@ -85,10 +85,17 @@ function extractFromText(text: string): string[] {
 
 export function extractPhones(html: string): PhoneCandidate[] {
   const $ = cheerio.load(html);
+
+  // cheerio's .text() includes <script>/<style> content — inline analytics
+  // snippets are full of long digit sequences (timestamps, IDs) that would
+  // otherwise get scanned as phone-number candidates.
+  const clone = $.root().clone();
+  clone.find("script, style, noscript").remove();
+
   const rawStrings = [
     ...extractTel($),
-    ...extractFromText($("footer, [class*='footer' i], [id*='footer' i]").text()),
-    ...extractFromText($("body").text()),
+    ...extractFromText(clone.find("footer, [class*='footer' i], [id*='footer' i]").text()),
+    ...extractFromText(clone.find("body").text()),
   ];
 
   const seen = new Set<string>();

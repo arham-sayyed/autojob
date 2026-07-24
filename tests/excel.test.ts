@@ -103,4 +103,53 @@ describe("storage/excel", () => {
     const store = createExcelStore(filePath);
     await expect(store.markStatus("https://nope.com", "Emailed")).rejects.toThrow();
   });
+
+  describe("upsertMany", () => {
+    it("writes N rows in a single read+write and round-trips them all", async () => {
+      const store = createExcelStore(filePath);
+      await store.upsertMany([
+        { website: "https://a.com", companyName: "A" },
+        { website: "https://b.com", companyName: "B" },
+        { website: "https://c.com", companyName: "C" },
+      ]);
+
+      const all = await store.loadAll();
+      expect(all).toHaveLength(3);
+      expect(all.map((r) => r.companyName).sort()).toEqual(["A", "B", "C"]);
+    });
+
+    it("dedupes against existing rows the same way upsert() does", async () => {
+      const store = createExcelStore(filePath);
+      await store.upsert({ website: "https://a.com", companyName: "A", status: "EmailFound" });
+
+      await store.upsertMany([
+        { website: "https://a.com", companyName: "A Updated" }, // should update, not duplicate
+        { website: "https://d.com", companyName: "D" },
+      ]);
+
+      const all = await store.loadAll();
+      expect(all).toHaveLength(2);
+      const a = all.find((r) => r.website === "https://a.com");
+      expect(a?.companyName).toBe("A Updated");
+      expect(a?.status).toBe("EmailFound"); // untouched field preserved
+    });
+
+    it("dedupes duplicate websites within the same batch, last write wins", async () => {
+      const store = createExcelStore(filePath);
+      await store.upsertMany([
+        { website: "https://a.com", companyName: "First" },
+        { website: "https://a.com", companyName: "Second" },
+      ]);
+
+      const all = await store.loadAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].companyName).toBe("Second");
+    });
+
+    it("is a no-op for an empty array (does not create the file)", async () => {
+      const store = createExcelStore(filePath);
+      await store.upsertMany([]);
+      expect(fs.existsSync(filePath)).toBe(false);
+    });
+  });
 });

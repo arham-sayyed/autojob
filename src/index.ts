@@ -86,24 +86,26 @@ async function cmdDiscover(args: ParsedArgs): Promise<void> {
   const results = await discoverCompanies();
   logger.info(`[discover] found ${results.length} raw listing(s) from Maps`);
 
-  let upserted = 0;
+  // Batched: upsert() re-reads and rewrites the whole workbook every call,
+  // which is O(n²) I/O across ~130 companies in a typical run if done one
+  // at a time — upsertMany() does it in a single read+write.
+  const toUpsert: Array<Partial<CompanyRow> & { website: string }> = [];
   for (const result of results) {
     if (!result.website) continue; // nothing to scrape/email later
     if (args.dryRun) {
       console.log(
         `[dry-run] ${result.name} | ${result.website} | ${result.address ?? "-"} | rating=${result.rating ?? "-"}`
       );
-      continue;
     }
-    await excel.upsert({
+    toUpsert.push({
       website: result.website,
       companyName: result.name,
       address: result.address ?? "",
       googleRating: result.rating,
     });
-    upserted++;
   }
-  if (!args.dryRun) logger.info(`[discover] upserted ${upserted} row(s)`);
+  await excel.upsertMany(toUpsert);
+  logger.info(`[discover] upserted ${toUpsert.length} row(s)`);
 
   await closeMapsBrowser();
 }
@@ -121,9 +123,7 @@ async function cmdScrape(args: ParsedArgs): Promise<void> {
       const pages = await crawlWebsite(row.website);
       if (pages.length === 0) {
         logger.warn(`[scrape] no pages fetched for ${row.website}`);
-        if (!args.dryRun) {
-          await excel.markStatus(row.website, "NoEmailFound", { dateScraped: new Date() });
-        }
+        await excel.markStatus(row.website, "NoEmailFound", { dateScraped: new Date() });
         continue;
       }
 
@@ -171,7 +171,6 @@ async function cmdScrape(args: ParsedArgs): Promise<void> {
             `mobile=${mobile ?? "-"} landline=${landline ?? "-"} ats=${ats} jobs=${jobTitles.length} ` +
             `tech=${techStack.join(",") || "-"} fit=${fitScore} status=${status}`
         );
-        continue;
       }
 
       await excel.upsert({
@@ -255,7 +254,7 @@ async function cmdSend(args: ParsedArgs): Promise<void> {
   for (const row of ready) {
     const result = await sendEmail({ to: row.email, subject: row.emailSubject, body: row.emailBody });
     if (!result.success) {
-      if (result.error?.toLowerCase().includes("daily send cap")) {
+      if (result.stopBatch) {
         logger.warn(`[send] ${result.error} — stopping, remaining rows left for next run`);
         break;
       }
@@ -279,7 +278,7 @@ async function cmdFollowup(args: ParsedArgs): Promise<void> {
   for (const row of due) {
     const result = await sendEmail({ to: row.email, subject: row.followUpSubject, body: row.followUpBody });
     if (!result.success) {
-      if (result.error?.toLowerCase().includes("daily send cap")) {
+      if (result.stopBatch) {
         logger.warn(`[followup] ${result.error} — stopping, remaining rows left for next run`);
         break;
       }
@@ -317,11 +316,14 @@ async function cmdWhatsapp(args: ParsedArgs): Promise<void> {
     );
 
     if (outcome.status === null) {
-      if (outcome.error) {
+      if (outcome.stopBatch) {
         logger.warn(`[whatsapp] stopping: ${outcome.error}`);
         break;
       }
-      continue; // dry-run log only — left unmarked for review/retry
+      if (outcome.error) {
+        logger.warn(`[whatsapp] skipping ${row.website} after error, will retry next run: ${outcome.error}`);
+      }
+      continue; // dry-run, or a per-row error — left unmarked for review/retry
     }
 
     await excel.markStatus(row.website, row.status, {

@@ -24,7 +24,13 @@ export function backupExcel(
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const baseName = path.basename(sourcePath, path.extname(sourcePath));
-  const destPath = path.join(destDir, `${baseName}-${timestamp}${path.extname(sourcePath)}`);
+  const ext = path.extname(sourcePath);
+
+  // Two backups can land in the same millisecond (e.g. run-all calls it
+  // back-to-back at a couple of stage boundaries) — a bare ms timestamp
+  // would collide and silently overwrite. Add a short random suffix.
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const destPath = path.join(destDir, `${baseName}-${timestamp}-${suffix}${ext}`);
 
   fs.copyFileSync(sourcePath, destPath);
   logger.info(`[backup] saved ${destPath}`);

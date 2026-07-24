@@ -1,6 +1,7 @@
 import Groq from "groq-sdk";
 import * as cheerio from "cheerio";
 import { config } from "../config";
+import { createRateLimiter } from "../utils/rateLimiter";
 
 const MODEL = "llama-3.3-70b-versatile";
 
@@ -11,6 +12,12 @@ function getClient(): Groq {
   }
   return client;
 }
+
+// Groq's on-demand tier caps this model at 1K requests/minute. Without this,
+// a batch stage (e.g. groq-draft looping over ~90 companies) fires every
+// request back-to-back the moment one fails fast, which can burst well past
+// that RPM cap on its own — independent of any daily token budget.
+const groqLimiter = createRateLimiter({ minDelayMs: 500, maxDelayMs: 1500 });
 
 export interface EmailDraft {
   subject: string;
@@ -32,16 +39,18 @@ export interface FitScoreInput {
 }
 
 async function chat(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
-  const completion = await getClient().chat.completions.create({
-    model: MODEL,
-    temperature: 0.6,
-    max_tokens: maxTokens,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
+  return groqLimiter.run(async () => {
+    const completion = await getClient().chat.completions.create({
+      model: MODEL,
+      temperature: 0.6,
+      max_tokens: maxTokens,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+    return (completion.choices[0]?.message?.content ?? "").trim();
   });
-  return (completion.choices[0]?.message?.content ?? "").trim();
 }
 
 function htmlToPlainText(html: string): string {
@@ -50,12 +59,28 @@ function htmlToPlainText(html: string): string {
   return $("body").text().replace(/\s+/g, " ").trim();
 }
 
-function parseSubjectBody(raw: string, fallbackSubject: string): EmailDraft {
-  const match = raw.match(/^Subject:\s*(.+?)\s*\n+([\s\S]+)$/i);
+/**
+ * Parses the model's "Subject: ...\n\nBody..." response. Models regularly
+ * ignore the "respond with exactly" instruction — adding a preamble
+ * ("Here's the email:") or wrapping the reply in a markdown code fence — so
+ * this tolerates both instead of anchoring to the very start of the string
+ * (which would otherwise dump the whole raw response, "Subject:" line
+ * included, into the email body with a generic fallback subject).
+ */
+export function parseSubjectBody(raw: string, fallbackSubject: string): EmailDraft {
+  const cleaned = raw
+    .trim()
+    .replace(/^```[a-z]*\s*\n?/i, "")
+    .replace(/\n?```\s*$/, "")
+    .trim();
+
+  // `m` flag: match "Subject:" at the start of *any* line, not just index 0,
+  // so a preamble before it is simply excluded rather than breaking the parse.
+  const match = cleaned.match(/^Subject:\s*(.+?)\s*\n+([\s\S]+)$/im);
   if (match) {
     return { subject: match[1].trim(), body: match[2].trim() };
   }
-  return { subject: fallbackSubject, body: raw.trim() };
+  return { subject: fallbackSubject, body: cleaned };
 }
 
 /** Summarizes a company's scraped page HTML in 2-3 plain sentences. */

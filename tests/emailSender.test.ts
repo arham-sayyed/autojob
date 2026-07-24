@@ -58,7 +58,18 @@ describe("email/sender", () => {
     const blocked = await sender.sendEmail({ to: "a@b.com", subject: "over cap", body: "b" });
     expect(blocked.success).toBe(false);
     expect(blocked.error).toMatch(/daily send cap/i);
+    expect(blocked.stopBatch).toBe(true);
     expect(sendMailMock).toHaveBeenCalledTimes(25); // no additional send attempted
+  });
+
+  it("does not set stopBatch on a per-row failure, so callers can skip and continue", async () => {
+    // Regression: the caller used to distinguish "cap reached" from "this
+    // one row failed" by string-matching the error message — fragile, and
+    // it meant a malformed-address rejection could be mistaken for either.
+    const sender = createEmailSender({ sentCountDir: tmpDir, minDelayMs: 0, maxDelayMs: 0 });
+    const result = await sender.sendEmail({ to: "not-an-email", subject: "S", body: "b" });
+    expect(result.success).toBe(false);
+    expect(result.stopBatch).toBeUndefined();
   });
 
   it("reports failure and logs it when the transport rejects", async () => {
@@ -69,5 +80,17 @@ describe("email/sender", () => {
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/SMTP connection refused/);
     expect(sender.hasReachedDailyCap()).toBe(false); // failed sends don't count against the cap
+  });
+
+  it("refuses to send to a malformed address without ever touching the transport", async () => {
+    // Regression: sendEmail had no format check of its own, relying entirely
+    // on upstream extraction to keep garbage "emails" (e.g. a retina-asset
+    // filename misparsed as an address) from ever reaching nodemailer.
+    const sender = createEmailSender({ sentCountDir: tmpDir, minDelayMs: 0, maxDelayMs: 0 });
+    const result = await sender.sendEmail({ to: "logo@2x.png", subject: "S", body: "b" });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not a well-formed email/i);
+    expect(sendMailMock).not.toHaveBeenCalled();
+    expect(sender.hasReachedDailyCap()).toBe(false);
   });
 });

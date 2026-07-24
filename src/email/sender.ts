@@ -4,6 +4,7 @@ import path from "path";
 import { config } from "../config";
 import { logger, writeLog } from "../utils/logger";
 import { createRateLimiter } from "../utils/rateLimiter";
+import { isValidEmail } from "../extractors/email";
 
 export interface SendEmailParams {
   to: string;
@@ -14,6 +15,10 @@ export interface SendEmailParams {
 export interface SendResult {
   success: boolean;
   error?: string;
+  // true only when the *whole batch* should stop (daily cap reached).
+  // A per-row failure (bad address, transport error) leaves this unset, so
+  // callers skip just that row and continue with the rest.
+  stopBatch?: boolean;
 }
 
 const DEFAULT_SENT_COUNT_DIR = path.resolve(__dirname, "..", "..", "logs");
@@ -114,11 +119,19 @@ export function createEmailSender(options?: {
    * real company — the requested `to` is still what gets logged.
    */
   async function sendEmail(params: SendEmailParams): Promise<SendResult> {
+    // Last checkpoint before an irreversible external send — don't rely
+    // solely on upstream extraction validation to keep garbage out.
+    if (!isValidEmail(params.to)) {
+      const msg = `refusing to send: "${params.to}" is not a well-formed email address`;
+      logSendAttempt(params.to, params.subject, false, msg);
+      return { success: false, error: msg };
+    }
+
     return sendLimiter.run(async () => {
       if (hasReachedDailyCap()) {
         const msg = `daily send cap (${config.dailySendCap}) reached`;
         logSendAttempt(params.to, params.subject, false, msg);
-        return { success: false, error: msg };
+        return { success: false, error: msg, stopBatch: true };
       }
 
       const actualTo = config.autopilot ? params.to : config.smtpUser;

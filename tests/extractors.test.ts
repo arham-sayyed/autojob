@@ -54,6 +54,31 @@ describe("extractors/email", () => {
     ];
     expect(pickBestEmail(candidates)).toEqual({ email: "c@generic.com", source: "mailto" });
   });
+
+  it("does not mistake a retina-asset filename in inline CSS/JS for an email", () => {
+    // Regression: cheerio's .text() includes <script>/<style> content, and
+    // "logo@2x.png" is syntactically indistinguishable from an email address
+    // to the plain regex scanner.
+    const html = `
+      <html><body>
+        <script>var bg = "sprite@3x.svg"; console.log("cache@1x.webp");</script>
+        <style>.logo { background-image: url(logo@2x.png); }</style>
+        <p>Reach us at hello@realcompany.com</p>
+      </body></html>
+    `;
+    const candidates = extractEmails(html);
+    expect(candidates).toContainEqual({ email: "hello@realcompany.com", source: "regex" });
+    expect(candidates.some((c) => c.email.includes("@2x") || c.email.includes("@3x") || c.email.includes("@1x"))).toBe(
+      false
+    );
+  });
+
+  it("rejects file-extension-shaped TLDs even outside script/style tags", () => {
+    const html = `<html><body><p>See asset icon@2x.png for reference, or email hello@real.com</p></body></html>`;
+    const candidates = extractEmails(html);
+    expect(candidates).toContainEqual({ email: "hello@real.com", source: "regex" });
+    expect(candidates.some((c) => c.email === "icon@2x.png")).toBe(false);
+  });
 });
 
 describe("extractors/phone", () => {
@@ -99,6 +124,21 @@ describe("extractors/phone", () => {
     expect(mobile).toBe("9876543210");
     expect(landline).toBe("02243218765");
   });
+
+  it("does not mistake a 10-digit ID inside an inline script for a mobile number", () => {
+    // Regression: a numeric literal in inline JS (analytics event ID, a/b
+    // test bucket, etc.) that happens to be 10 digits starting 6-9 is
+    // syntactically indistinguishable from a real mobile number.
+    const html = `
+      <html><body>
+        <script>trackEvent(9876543210);</script>
+        <footer>Call: 022-4321 8765</footer>
+      </body></html>
+    `;
+    const { mobile, landline } = pickPrimaryPhones(extractPhones(html));
+    expect(mobile).toBeNull();
+    expect(landline).toBe("02243218765");
+  });
 });
 
 describe("extractors/careers", () => {
@@ -130,6 +170,34 @@ describe("extractors/careers", () => {
     expect(link).toBe("https://boards.greenhouse.io/fixtureco");
   });
 
+  it("prefers a real /careers link over an earlier incidental 'hiring' mention", () => {
+    // Regression: "first match wins" used to lock onto the earlier, worse
+    // match and never even look at the real careers link later on the page.
+    const html = `
+      <html><body>
+        <nav>
+          <a href="/culture">We're always hiring passionate people!</a>
+        </nav>
+        <footer>
+          <a href="/careers">Careers</a>
+        </footer>
+      </body></html>
+    `;
+    const link = findCareersLink(html, "https://fixtureco.com");
+    expect(link).toBe("https://fixtureco.com/careers");
+  });
+
+  it("prefers an ATS-hosted link over an earlier incidental keyword match", () => {
+    const html = `
+      <html><body>
+        <nav><a href="/blog/hiring-trends-2026">Hiring Trends for 2026</a></nav>
+        <footer><a href="https://boards.greenhouse.io/fixtureco">Open roles</a></footer>
+      </body></html>
+    `;
+    const link = findCareersLink(html, "https://fixtureco.com");
+    expect(link).toBe("https://boards.greenhouse.io/fixtureco");
+  });
+
   it("returns null when no careers link is present", () => {
     const html = `<html><body><a href="/about">About</a><a href="/pricing">Pricing</a></body></html>`;
     expect(findCareersLink(html, "https://fixtureco.com")).toBeNull();
@@ -143,6 +211,44 @@ describe("extractors/careers", () => {
       "Frontend Engineer (React)",
       "Product Designer",
     ]);
+  });
+
+  it("does not treat a site's nav/footer links as job titles when there's no recognized ATS", () => {
+    // Regression: a real careers page with no ATS returned 20+ "job titles"
+    // that were actually every nav + footer link on the page.
+    const html = `
+      <html><body>
+        <nav>
+          <ul>
+            <li><a href="/">Home</a></li>
+            <li><a href="/about">About</a></li>
+            <li><a href="/careers">Careers</a></li>
+            <li><a href="/blog">Blogs</a></li>
+          </ul>
+        </nav>
+        <main><h1>Careers</h1><p>We're not currently hiring, check back soon.</p></main>
+        <footer>
+          <ul>
+            <li><a href="/terms">Terms &amp; Conditions</a></li>
+            <li><a href="/privacy">Privacy Policy</a></li>
+          </ul>
+        </footer>
+      </body></html>
+    `;
+    expect(extractJobTitles(html, "none")).toEqual([]);
+  });
+
+  it("still extracts titles from a specifically-scoped job-listing container with no ATS", () => {
+    const html = `
+      <html><body>
+        <nav><ul><li><a href="/">Home</a></li></ul></nav>
+        <div class="job-listing">
+          <a href="/jobs/1">Backend Engineer</a>
+          <a href="/jobs/2">QA Analyst</a>
+        </div>
+      </body></html>
+    `;
+    expect(extractJobTitles(html, "none")).toEqual(["Backend Engineer", "QA Analyst"]);
   });
 });
 

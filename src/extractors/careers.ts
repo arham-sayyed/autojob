@@ -39,33 +39,48 @@ function resolveUrl(baseUrl: string, href: string): string | null {
   }
 }
 
+const EXACT_PATH_MATCHES = new Set(["careers", "career", "jobs", "join-us", "work-with-us"]);
+const EXACT_TEXT_MATCHES = new Set(["careers", "career", "jobs", "join us", "work with us"]);
+
 /**
  * Scans a page's links for one that looks like the careers/jobs page —
  * either an explicit ATS-hosted link, or an in-page link whose text/href
  * matches common careers-page phrasing.
+ *
+ * Scores every match rather than stopping at the first one: a marketing
+ * blurb like "We're always hiring!" linking to /culture earlier in the DOM
+ * would otherwise permanently block a real /careers link appearing later
+ * on the same page from ever being considered.
  */
 export function findCareersLink(html: string, baseUrl: string): string | null {
   const $ = cheerio.load(html);
-  let found: string | null = null;
+  const candidates: Array<{ url: string; score: number }> = [];
 
   $("a[href]").each((_, el) => {
-    if (found) return;
     const href = $(el).attr("href") ?? "";
     if (!href || href.startsWith("#")) return;
     const text = $(el).text().trim().toLowerCase();
     const hrefLower = href.toLowerCase();
 
     const isATSLink = ATS_PATTERNS.some(({ pattern }) => pattern.test(hrefLower));
+    const lastSegment = hrefLower.replace(/\/+$/, "").split("/").pop() ?? "";
+    const isExactMatch = EXACT_PATH_MATCHES.has(lastSegment) || EXACT_TEXT_MATCHES.has(text);
     const matchesKeyword = CAREERS_KEYWORDS.some(
       (k) => text.includes(k) || hrefLower.includes(k.replace(/\s+/g, "-")) || hrefLower.includes(k.replace(/\s+/g, ""))
     );
 
-    if (isATSLink || matchesKeyword) {
-      found = resolveUrl(baseUrl, href);
-    }
+    if (!isATSLink && !isExactMatch && !matchesKeyword) return;
+
+    const resolved = resolveUrl(baseUrl, href);
+    if (!resolved) return;
+
+    const score = isATSLink ? 100 : isExactMatch ? 80 : 10;
+    candidates.push({ url: resolved, score });
   });
 
-  return found;
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0].url;
 }
 
 function textList($: cheerio.CheerioAPI, selector: string): string[] {
@@ -75,13 +90,18 @@ function textList($: cheerio.CheerioAPI, selector: string): string[] {
     .filter((t) => t.length > 0 && t.length < 120);
 }
 
+// Deliberately does NOT include a broad "li a" or "[class*='job-title']"
+// fallback: on a page with no recognized ATS, those match every nav/footer
+// link on the page (they did in practice — one real careers page inflated
+// "job titles" to the site's entire nav+footer menu). Only match selectors
+// specific enough to a job-listing context to stay silent rather than wrong.
 function extractGenericTitles($: cheerio.CheerioAPI): string[] {
-  const candidates = [
+  return [
     ...textList($, "[class*='opening'] a, [class*='opening'] h3, [class*='opening'] h4"),
-    ...textList($, "[class*='job-title'], [class*='posting-title'], [data-ui='job-title']"),
-    ...textList($, "li a"),
+    ...textList($, "[class*='job-listing'] a, [class*='job-card'] a, [class*='job-item'] a"),
+    ...textList($, "[class*='vacanc'] a, [class*='position'] a"),
+    ...textList($, "[data-ui='job-title']"),
   ];
-  return candidates;
 }
 
 /**

@@ -217,6 +217,7 @@ export interface ExcelStore {
   loadAll(): Promise<CompanyRow[]>;
   getByStatus(statuses: Status[]): Promise<CompanyRow[]>;
   upsert(row: Partial<CompanyRow> & { website: string }): Promise<void>;
+  upsertMany(rows: Array<Partial<CompanyRow> & { website: string }>): Promise<void>;
   markStatus(
     website: string,
     status: Status,
@@ -283,8 +284,7 @@ export function createExcelStore(filePath: string): ExcelStore {
     return all.filter((r) => wanted.has(r.status));
   }
 
-  async function upsert(row: Partial<CompanyRow> & { website: string }): Promise<void> {
-    const { workbook, sheet } = await loadWorkbook();
+  function applyUpsert(sheet: ExcelJS.Worksheet, row: Partial<CompanyRow> & { website: string }): void {
     const normalized = normalizeWebsite(row.website);
     const existing = findRow(sheet, normalized);
 
@@ -294,6 +294,26 @@ export function createExcelStore(filePath: string): ExcelStore {
     const targetRow = existing ?? sheet.addRow({});
     writeCompanyToRow(targetRow, merged);
     targetRow.commit();
+  }
+
+  async function upsert(row: Partial<CompanyRow> & { website: string }): Promise<void> {
+    const { workbook, sheet } = await loadWorkbook();
+    applyUpsert(sheet, row);
+    await saveWorkbook(workbook);
+  }
+
+  /**
+   * Same as upsert(), but for N rows in one read+write instead of N. A
+   * single-row upsert() reads and rewrites the *entire* workbook from disk
+   * every call — fine occasionally, but O(n²) I/O when called once per row
+   * in a loop (discover previously did this for ~130 companies per run).
+   */
+  async function upsertMany(rows: Array<Partial<CompanyRow> & { website: string }>): Promise<void> {
+    if (rows.length === 0) return;
+    const { workbook, sheet } = await loadWorkbook();
+    for (const row of rows) {
+      applyUpsert(sheet, row);
+    }
     await saveWorkbook(workbook);
   }
 
@@ -319,7 +339,7 @@ export function createExcelStore(filePath: string): ExcelStore {
     await saveWorkbook(workbook);
   }
 
-  return { filePath, loadAll, getByStatus, upsert, markStatus };
+  return { filePath, loadAll, getByStatus, upsert, upsertMany, markStatus };
 }
 
 const DEFAULT_EXCEL_PATH = path.resolve(__dirname, "..", "..", "data", "companies.xlsx");
@@ -329,4 +349,5 @@ export const companiesStore = createExcelStore(DEFAULT_EXCEL_PATH);
 export const loadAll = companiesStore.loadAll;
 export const getByStatus = companiesStore.getByStatus;
 export const upsert = companiesStore.upsert;
+export const upsertMany = companiesStore.upsertMany;
 export const markStatus = companiesStore.markStatus;

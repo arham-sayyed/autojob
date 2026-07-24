@@ -26,6 +26,26 @@ function randomDelay(minMs: number, maxMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Sponsored/ad listings can surface a Google ad-click redirect
+ * (e.g. "/aclk?sa=l&ai=...") in the "Website" slot instead of the business's
+ * real site — reject anything that isn't a plausible external http(s) URL.
+ */
+export function isPlausibleWebsite(url: string | null): boolean {
+  if (!url) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (!/^https?:$/.test(parsed.protocol)) return false;
+  if (/(^|\.)google\.[a-z.]+$/i.test(parsed.hostname)) return false;
+  if (/(^|\.)gstatic\.com$/i.test(parsed.hostname)) return false;
+  if (parsed.pathname.startsWith("/aclk")) return false;
+  return true;
+}
+
 let browserPromise: Promise<Browser> | null = null;
 
 function getBrowser(): Promise<Browser> {
@@ -127,12 +147,13 @@ export async function searchGoogleMaps(searchTerm: string, city: string): Promis
     const listings = await extractListings(page);
     const seen = new Set<string>();
     const deduped: MapsResult[] = [];
-    for (const listing of listings) {
-      if (!listing.name) continue;
-      const key = `${listing.name.toLowerCase()}|${(listing.website ?? "").toLowerCase()}`;
+    for (const raw of listings) {
+      if (!raw.name) continue;
+      const website = isPlausibleWebsite(raw.website) ? raw.website : null;
+      const key = `${raw.name.toLowerCase()}|${(website ?? "").toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      deduped.push(listing);
+      deduped.push({ ...raw, website });
     }
 
     logger.info(`[googleMaps] found ${deduped.length} listing(s) for "${searchTerm}" in "${city}"`);
@@ -148,13 +169,23 @@ export async function discoverCompanies(
   cities: string[] = config.searchCities
 ): Promise<MapsResult[]> {
   const all: MapsResult[] = [];
+  // searchGoogleMaps() only dedupes within a single search — overlapping
+  // search terms (e.g. "software company" and "SaaS company" in the same
+  // city) surface many of the same businesses, so dedupe across the whole
+  // run too, otherwise "found"/"upserted" counts are inflated with repeats.
+  const seen = new Set<string>();
 
   for (const city of cities) {
     for (const term of searchTerms) {
       await searchLimiter.run(async () => {
         try {
           const results = await searchGoogleMaps(term, city);
-          all.push(...results);
+          for (const result of results) {
+            const key = `${result.name.toLowerCase()}|${(result.website ?? "").toLowerCase()}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            all.push(result);
+          }
         } catch (err) {
           logger.error(
             `[googleMaps] search failed for "${term}" in "${city}": ${

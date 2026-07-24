@@ -40,8 +40,20 @@ const HIRING_PREFIXES = [
   "hiring",
 ];
 
-function isValidEmail(email: string): boolean {
-  return VALID_EMAIL_REGEX.test(email);
+// Not real TLDs — but "logo@2x.png" or "sprite@3x.svg" (common in inline CSS/JS
+// for retina assets) is syntactically indistinguishable from an email address
+// to the regex above, so anything ending in one of these is rejected outright.
+const FILE_EXTENSION_TLDS = new Set([
+  "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico",
+  "css", "js", "json", "xml", "map",
+  "woff", "woff2", "ttf", "eot", "otf",
+  "mp4", "mp3", "webm", "pdf", "zip",
+]);
+
+export function isValidEmail(email: string): boolean {
+  if (!VALID_EMAIL_REGEX.test(email)) return false;
+  const tld = email.slice(email.lastIndexOf(".") + 1).toLowerCase();
+  return !FILE_EXTENSION_TLDS.has(tld);
 }
 
 function isHiringRelevant(email: string): boolean {
@@ -94,7 +106,14 @@ function extractJsonLd($: cheerio.CheerioAPI): EmailCandidate[] {
 function extractRegexAndFooter($: cheerio.CheerioAPI): EmailCandidate[] {
   const results: EmailCandidate[] = [];
 
-  const footerText = $("footer, [class*='footer' i], [id*='footer' i]").text();
+  // cheerio's .text() walks every descendant text node, including inside
+  // <script>/<style> — unlike a browser's rendered text, so inline JS/CSS
+  // (analytics config, retina-asset background-image rules, etc.) would
+  // otherwise get scanned for "emails" too.
+  const clone = $.root().clone();
+  clone.find("script, style, noscript").remove();
+
+  const footerText = clone.find("footer, [class*='footer' i], [id*='footer' i]").text();
   const footerSet = new Set<string>();
   for (const m of footerText.match(EMAIL_REGEX) ?? []) {
     const email = m.toLowerCase();
@@ -104,7 +123,7 @@ function extractRegexAndFooter($: cheerio.CheerioAPI): EmailCandidate[] {
     }
   }
 
-  const bodyText = $("body").text();
+  const bodyText = clone.find("body").text();
   const seen = new Set<string>();
   for (const m of bodyText.match(EMAIL_REGEX) ?? []) {
     const email = m.toLowerCase();
