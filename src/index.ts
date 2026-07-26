@@ -17,6 +17,9 @@ import { detectTechStack, techStackToString } from "./extractors/techStack";
 import { summarize, scoreFit, draftEmail, draftFollowUp, draftWhatsApp, CompanyContext } from "./ai/groq";
 import { sendEmail } from "./email/sender";
 import { sendToRow as sendWhatsAppToRow, destroy as destroyWhatsAppClient } from "./whatsapp/sender";
+import { computeReportStats } from "./report/stats";
+import { buildReportHtml } from "./report/htmlReport";
+import { generateReportPdf } from "./report/pdfReport";
 
 installGlobalHandlers();
 
@@ -337,56 +340,21 @@ async function cmdWhatsapp(args: ParsedArgs): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// report
+// report — generate a PDF summary (stats, pipeline funnel, top matches) into
+// reports/, named with a date+time suffix so repeated same-day runs never
+// collide.
 // ---------------------------------------------------------------------------
 async function cmdReport(): Promise<void> {
   const rows = await excel.loadAll();
+  const stats = computeReportStats(rows);
+  const generatedAt = new Date();
+  const html = buildReportHtml(stats, generatedAt);
 
-  const byStatus: Record<string, number> = {};
-  const byWhatsApp: Record<string, number> = {};
-  const roles = new Set<string>();
+  const timestamp = generatedAt.toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const outPath = path.resolve(__dirname, "..", "reports", `report-${timestamp}.pdf`);
+  await generateReportPdf(html, outPath);
 
-  for (const row of rows) {
-    byStatus[row.status] = (byStatus[row.status] ?? 0) + 1;
-    const wa = row.whatsAppStatus || "(none)";
-    byWhatsApp[wa] = (byWhatsApp[wa] ?? 0) + 1;
-    if (row.jobTitles) {
-      row.jobTitles
-        .split(";")
-        .map((t) => t.trim())
-        .filter(Boolean)
-        .forEach((t) => roles.add(t));
-    }
-  }
-
-  const topFit = [...rows]
-    .filter((r) => r.fitScore !== null)
-    .sort((a, b) => (b.fitScore ?? 0) - (a.fitScore ?? 0))
-    .slice(0, 10);
-
-  console.log(`\nTotal companies: ${rows.length}`);
-
-  console.log("\nBy Status:");
-  for (const [status, count] of Object.entries(byStatus).sort((a, b) => b[1] - a[1])) {
-    console.log(`  ${status}: ${count}`);
-  }
-
-  console.log("\nBy WhatsAppStatus:");
-  for (const [status, count] of Object.entries(byWhatsApp).sort((a, b) => b[1] - a[1])) {
-    console.log(`  ${status}: ${count}`);
-  }
-
-  console.log(`\nDistinct roles seen: ${roles.size}`);
-  if (roles.size > 0) {
-    const preview = [...roles].slice(0, 20).join(", ");
-    console.log(`  ${preview}${roles.size > 20 ? ", ..." : ""}`);
-  }
-
-  console.log("\nTop FitScores:");
-  for (const row of topFit) {
-    console.log(`  ${row.fitScore} — ${row.companyName || row.website} (${row.website})`);
-  }
-  console.log("");
+  logger.info(`[report] saved ${outPath}`);
 }
 
 // ---------------------------------------------------------------------------

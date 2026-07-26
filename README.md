@@ -30,8 +30,8 @@ discover  ->  scrape  ->  groq-draft  ->  send  ->  whatsapp  ->  followup
 6. **followup** — sends the drafted follow-up email for `Emailed` rows once
    `FOLLOW_UP_AFTER_DAYS` has passed; sets `Status=FollowedUp`.
 7. **backup** — saves a timestamped copy of `companies.xlsx` to `data/backups/`.
-8. **report** — prints counts by status/WhatsApp status, distinct roles seen, and
-   top fit scores.
+8. **report** — generates a PDF summary (headline stats, pipeline funnel, WhatsApp
+   status breakdown, top fit-score companies) into `reports/`.
 
 `run-all` chains all of the above in order.
 
@@ -78,7 +78,7 @@ npm run send         # send drafted emails
 npm run followup     # send due follow-up emails
 npm run whatsapp     # send drafted WhatsApp messages
 npm run run-all      # run the full pipeline end to end
-npm run report       # print a status summary
+npm run report       # generate a PDF summary report into reports/
 ```
 
 All commands accept:
