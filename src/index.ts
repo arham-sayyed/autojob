@@ -18,7 +18,7 @@ import { summarize, scoreFit, draftEmail, draftFollowUp, draftWhatsApp, CompanyC
 import { sendEmail } from "./email/sender";
 import { sendToRow as sendWhatsAppToRow, destroy as destroyWhatsAppClient } from "./whatsapp/sender";
 import { computeReportStats } from "./report/stats";
-import { buildReportHtml } from "./report/htmlReport";
+import { buildReportHtml, formatFileTimestamp } from "./report/htmlReport";
 import { generateReportPdf } from "./report/pdfReport";
 
 installGlobalHandlers();
@@ -350,7 +350,7 @@ async function cmdReport(): Promise<void> {
   const generatedAt = new Date();
   const html = buildReportHtml(stats, generatedAt);
 
-  const timestamp = generatedAt.toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const timestamp = formatFileTimestamp(generatedAt);
   const outPath = path.resolve(__dirname, "..", "reports", `report-${timestamp}.pdf`);
   await generateReportPdf(html, outPath);
 

@@ -11,6 +11,8 @@ export interface ReportStats {
   byWhatsApp: StatusCount[];
   distinctRoles: string[];
   topFit: CompanyRow[];
+  emailsFoundCount: number;
+  sentCount: number;
 }
 
 function countBy(counts: Record<string, number>): StatusCount[] {
@@ -48,5 +50,7 @@ export function computeReportStats(rows: CompanyRow[]): ReportStats {
     byWhatsApp: countBy(whatsAppCounts),
     distinctRoles: [...roles].sort(),
     topFit,
+    emailsFoundCount: rows.filter((r) => r.email !== "").length,
+    sentCount: rows.filter((r) => r.dateEmailed !== null).length,
   };
 }

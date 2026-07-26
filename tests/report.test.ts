@@ -98,6 +98,23 @@ describe("report/stats", () => {
     expect(stats.byWhatsApp).toEqual([]);
     expect(stats.distinctRoles).toEqual([]);
     expect(stats.topFit).toEqual([]);
+    expect(stats.emailsFoundCount).toBe(0);
+    expect(stats.sentCount).toBe(0);
+  });
+
+  it("counts emailsFoundCount and sentCount cumulatively, not by current status", () => {
+    const rows = [
+      // Progressed all the way to FollowedUp — status is no longer EmailFound/Emailed,
+      // but an email was found and sent, so it should still count in both tiles.
+      row({ status: "FollowedUp", email: "a@example.com", dateEmailed: new Date("2026-01-01") }),
+      // Currently sitting at EmailFound, no email sent yet.
+      row({ status: "EmailFound", email: "b@example.com", dateEmailed: null }),
+      // No email ever found.
+      row({ status: "New", email: "", dateEmailed: null }),
+    ];
+    const stats = computeReportStats(rows);
+    expect(stats.emailsFoundCount).toBe(2);
+    expect(stats.sentCount).toBe(1);
   });
 });
 
@@ -108,10 +125,13 @@ describe("report/htmlReport", () => {
       row({ status: "EmailFound" }),
       row({ status: "Emailed" }),
     ]);
-    const html = buildReportHtml(stats, new Date("2026-07-26T14:32:00Z"));
+    // Local-timezone constructor (not a UTC ISO string) so the expected output
+    // matches formatTimestamp's local-time rendering regardless of the test
+    // runner's timezone.
+    const html = buildReportHtml(stats, new Date(2026, 6, 26, 14, 32));
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain("AutoJob Outreach Report");
-    expect(html).toContain("2026-07-26");
+    expect(html).toContain("2026-07-26 14:32");
     expect(html).toContain(">3<"); // total companies tile
   });
 
@@ -160,6 +180,7 @@ describe("report/htmlReport", () => {
   it("shows WhatsApp status counts", () => {
     const stats = computeReportStats([row({ whatsAppStatus: "Sent" })]);
     const html = buildReportHtml(stats, new Date());
-    expect(html).toContain("Sent");
+    expect(html).toContain("WhatsApp Status");
+    expect(html).toContain("<strong>1</strong> Sent");
   });
 });

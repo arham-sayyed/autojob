@@ -31,11 +31,21 @@ function formatTimestamp(date: Date): string {
   )}:${pad(date.getMinutes())}`;
 }
 
+// Filesystem-safe timestamp for use in filenames — same local-time components
+// as formatTimestamp (not UTC), so the filename and the in-PDF header always
+// agree. Includes seconds so repeated runs in the same minute don't collide.
+export function formatFileTimestamp(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(
+    date.getHours()
+  )}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
+}
+
 function renderStatTiles(stats: ReportStats): string {
   const tiles = [
     { label: "Total Companies", value: stats.totalCompanies },
-    { label: "Emails Found", value: statCount(stats, "EmailFound") },
-    { label: "Sent", value: statCount(stats, "Emailed") },
+    { label: "Emails Found", value: stats.emailsFoundCount },
+    { label: "Sent", value: stats.sentCount },
   ];
   return tiles
     .map(
