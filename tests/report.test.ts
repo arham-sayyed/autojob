@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeReportStats } from "../src/report/stats";
+import { buildReportHtml } from "../src/report/htmlReport";
 import type { CompanyRow } from "../src/storage/excel";
 
 function row(overrides: Partial<CompanyRow>): CompanyRow {
@@ -97,5 +98,68 @@ describe("report/stats", () => {
     expect(stats.byWhatsApp).toEqual([]);
     expect(stats.distinctRoles).toEqual([]);
     expect(stats.topFit).toEqual([]);
+  });
+});
+
+describe("report/htmlReport", () => {
+  it("includes total count, stat tiles, and generated timestamp", () => {
+    const stats = computeReportStats([
+      row({ status: "New" }),
+      row({ status: "EmailFound" }),
+      row({ status: "Emailed" }),
+    ]);
+    const html = buildReportHtml(stats, new Date("2026-07-26T14:32:00Z"));
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain("AutoJob Outreach Report");
+    expect(html).toContain("2026-07-26");
+    expect(html).toContain(">3<"); // total companies tile
+  });
+
+  it("renders a funnel bar for every non-zero status in pipeline order", () => {
+    const stats = computeReportStats([
+      row({ status: "Emailed" }),
+      row({ status: "New" }),
+      row({ status: "New" }),
+    ]);
+    const html = buildReportHtml(stats, new Date());
+    const newIndex = html.indexOf("New");
+    const emailedIndex = html.indexOf("Emailed");
+    expect(newIndex).toBeGreaterThan(-1);
+    expect(emailedIndex).toBeGreaterThan(-1);
+    expect(newIndex).toBeLessThan(emailedIndex); // pipeline order: New before Emailed
+  });
+
+  it("omits statuses with zero rows from the funnel", () => {
+    const stats = computeReportStats([row({ status: "New" })]);
+    const html = buildReportHtml(stats, new Date());
+    expect(html).not.toContain("Replied");
+  });
+
+  it("renders the top fit table with company name, website, and score", () => {
+    const stats = computeReportStats([
+      row({ website: "acme.com", companyName: "Acme Robotics", fitScore: 92 }),
+    ]);
+    const html = buildReportHtml(stats, new Date());
+    expect(html).toContain("Acme Robotics");
+    expect(html).toContain("acme.com");
+    expect(html).toContain("92");
+  });
+
+  it("falls back to website when companyName is blank in the top fit table", () => {
+    const stats = computeReportStats([row({ website: "noname.com", fitScore: 50 })]);
+    const html = buildReportHtml(stats, new Date());
+    expect(html).toContain("noname.com");
+  });
+
+  it("shows a placeholder message when there are no scored companies", () => {
+    const stats = computeReportStats([row({ status: "New", fitScore: null })]);
+    const html = buildReportHtml(stats, new Date());
+    expect(html).toContain("No scored companies yet");
+  });
+
+  it("shows WhatsApp status counts", () => {
+    const stats = computeReportStats([row({ whatsAppStatus: "Sent" })]);
+    const html = buildReportHtml(stats, new Date());
+    expect(html).toContain("Sent");
   });
 });
