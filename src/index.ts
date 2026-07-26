@@ -387,7 +387,7 @@ Commands:
   followup     Send follow-up emails for Emailed rows past FOLLOW_UP_AFTER_DAYS
   whatsapp     Send drafted WhatsApp messages (respects DAILY_WHATSAPP_CAP, AUTOPILOT)
   run-all      discover -> scrape -> backup -> groq-draft -> send -> whatsapp -> followup -> backup -> report
-  report       Summarize counts by Status/WhatsAppStatus, roles seen, top FitScores
+  report       Generate a PDF summary report (stats, pipeline funnel, top FitScores) into reports/
 
 --from/--to are 0-based row indices into the sheet (--to exclusive); default to the full sheet.
 --dry-run (discover/scrape only) logs extracted data to the console without changing Status.
