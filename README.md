@@ -1,4 +1,4 @@
-# Job Outreach Bot
+# AutoJob (Job Outreach Bot)
 
 A personal automation tool for job-searching. Point it at a few cities and it will:
 
