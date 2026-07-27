@@ -7,8 +7,6 @@ resume attached), and tracks everything in a local Excel file so no company is e
 contacted twice. It can optionally follow up after a set number of days and send a
 WhatsApp message via `whatsapp-web.js`.
 
-See [PROJECT_BRIEF.md](./PROJECT_BRIEF.md) for the full design rationale.
-
 ## How it works
 
 ```
@@ -130,3 +128,7 @@ src/
   use conservative caps.
 - No ATS auto-apply — the bot detects Greenhouse/Lever/Workable careers pages and
   extracts job titles but does not submit applications.
+
+## License
+
+[MIT](./LICENSE)

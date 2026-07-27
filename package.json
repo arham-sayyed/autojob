@@ -1,8 +1,12 @@
 {
   "name": "autojob",
   "version": "1.0.0",
-  "description": "",
+  "description": "A single-user, single-machine automation pipeline for job-searching: discovers nearby companies via Google Maps, scrapes contact info, drafts personalized outreach with Groq, and sends email/WhatsApp with local Excel tracking.",
   "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arham-sayyed/autojob.git"
+  },
   "scripts": {
     "build": "tsc",
     "discover": "ts-node src/index.ts discover",
@@ -14,12 +18,12 @@
     "whatsapp": "ts-node src/index.ts whatsapp",
     "run-all": "ts-node src/index.ts run-all",
     "report": "ts-node src/index.ts report",
-        "pipeline": "npm run run-all && npm run report",
+    "pipeline": "npm run run-all && npm run report",
     "test": "vitest run"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Arham Sayyed",
+  "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
     "@types/node": "^26.1.1",

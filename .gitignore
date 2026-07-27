@@ -5,6 +5,10 @@ dist/
 logs/
 data/companies.xlsx
 data/backups/
+data/resume.pdf
+data/resume-highlights.local.txt
 reports/
 .wwebjs_auth/
 .wwebjs_cache/
+PROJECT_BRIEF.md
+docs/
